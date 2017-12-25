@@ -10,10 +10,12 @@ namespace MySqlLib
     /// <summary>Класс для простой работы с MySQL сервером.</summary>
     public class MySqlData : ICloneable, IDisposable
     {
-        #region variables
+        #region Variables
         public bool ClearParametersAfterQuery { get; set; } = false;
 
-        private MySqlConnection connection;
+        private MySqlConnection _connection;
+        public MySqlConnection Connection { get => _connection; }
+
         private MySqlCommand _command;
         private MySqlCommand command
         {
@@ -238,7 +240,7 @@ namespace MySqlLib
 
         public MySqlData()
         {
-            connection = new MySqlConnection();
+            _connection = new MySqlConnection();
             ErrorPattern = new MySqlDataErrorPattern();
             command = new MySqlCommand();
         }
@@ -247,14 +249,14 @@ namespace MySqlLib
         {
             MySqlData newMD = new MySqlData()
             {
-                connection = (MySqlConnection)connection?.Clone(),
+                _connection = (MySqlConnection)_connection?.Clone(),
                 command = (MySqlCommand)command?.Clone(),
                 ErrorPattern = ErrorPattern,
                 ClearParametersAfterQuery = ClearParametersAfterQuery
             };
             if (newMD.command != null)
             {
-                newMD.command.Connection = newMD.connection;
+                newMD.command.Connection = newMD._connection;
             }
             return newMD;
         }
@@ -262,7 +264,7 @@ namespace MySqlLib
         public void Dispose()
         {
             command.Dispose();
-            connection.Dispose();
+            _connection.Dispose();
         }
 
         public MySqlDataVoid TestConnection()
@@ -270,7 +272,7 @@ namespace MySqlLib
             MySqlDataVoid mr = OpenConnection();
             if (!mr.HasError)
             {
-                connection.Close();
+                _connection.Close();
             }
             return mr;
         }
@@ -279,26 +281,26 @@ namespace MySqlLib
         {
             command = new MySqlCommand()
             {
-                Connection = connection
+                Connection = _connection
             };
         }
 
         public static string GetConnectionString(string server, int port, string db, string user, string pass)
             => $"Database={db};Data Source={server};Port={port};User Id={user};Password={pass}";
 
-        public string GetConnectionString() => connection.ConnectionString;
+        public string ConnectionString { get => _connection.ConnectionString; }
 
         /// <summary>Устанавливает соединение с сервером</summary>
         /// <param name="connectionString">Строка с данными для подключения к базе данных</param>
         /// <returns>Если во время выполнения возникает ошибка, возвращает её текст.</returns>
         public void SetConnection(string connectionString)
         {
-            if (connection != null && connection.State == ConnectionState.Open)
+            if (_connection != null && _connection.State == ConnectionState.Open)
             {
-                connection.Close();
+                _connection.Close();
             }
-            connection = new MySqlConnection(connectionString);
-            command.Connection = connection;
+            _connection = new MySqlConnection(connectionString);
+            command.Connection = _connection;
         }
 
         /// <summary>Устанавливает соединение с сервером</summary>
@@ -309,7 +311,7 @@ namespace MySqlLib
             {
                 connection.Close();
             }
-            this.connection = (MySqlConnection)connection.Clone();
+            this._connection = (MySqlConnection)connection.Clone();
             command.Connection = connection;
         }
 
@@ -318,7 +320,7 @@ namespace MySqlLib
             MySqlDataVoid mr = new MySqlDataVoid();
             try
             {
-                connection.Open();
+                _connection.Open();
                 mr.HasError = false;
             }
             catch (MySqlException ex)
@@ -383,7 +385,7 @@ namespace MySqlLib
             }
             finally
             {
-                connection.Close();
+                _connection.Close();
             }
             if (ClearParametersAfterQuery)
             {
@@ -419,7 +421,7 @@ namespace MySqlLib
             {
                 CatchError(result, ex);
             }
-            connection.Close();
+            _connection.Close();
             if (ClearParametersAfterQuery) Parameters.Clear();
             return result;
         }
@@ -464,12 +466,15 @@ namespace MySqlLib
             {
                 CatchError(result, ex);
             }
-            connection.Close();
+            _connection.Close();
             if (ClearParametersAfterQuery) Parameters.Clear();
 
-            foreach (string[] col in colAliases)
+            if (!result.HasError)
             {
-                result.Result.Columns[col[0]].ColumnName = col[1];
+                foreach (string[] col in colAliases)
+                {
+                    result.Result.Columns[col[0]].ColumnName = col[1];
+                }
             }
             return result;
         }
