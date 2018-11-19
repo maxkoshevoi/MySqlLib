@@ -8,7 +8,7 @@ using System.Linq;
 
 namespace MySqlLib
 {
-    /// <summary>Класс для простой работы с MySQL сервером.</summary>
+    /// <summary>A class that facilitates the use of MySql ADO</summary>
     [DebuggerStepThrough]
     public class MySqlData : ICloneable, IDisposable
     {
@@ -31,18 +31,18 @@ namespace MySqlLib
         public MySqlDataErrorPattern ErrorPattern { get; set; }
         public MySqlDataParameters Parameters { get; private set; }
 
-        /// <summary>Задаёт или возвращает таймаут для выполнения команды.</summary>
+        /// <summary>Sets or gets the timeout for executing a command.</summary>
         public int CommandTimeout
         {
             get { return command.CommandTimeout; }
             set { command.CommandTimeout = value; }
         }
 
-        /// <summary>Возвращаемые данные.</summary>
+        /// <summary>Responce format.</summary>
         public class MySqlDataResult<T> : MySqlDataVoid
         {
             /// <summary>
-            /// Возвращает результат запроса.
+            /// Query result.
             /// </summary>
             public T Result;
 
@@ -56,15 +56,15 @@ namespace MySqlLib
             public void Dispose() { }
         }
 
-        /// <summary>Возвращаемые данные.</summary>
+        /// <summary>Responce format.</summary>
         public class MySqlDataVoid
         {
             /// <summary>
-            /// Возвращает текст ошибки.
+            /// Exception information.
             /// </summary>
             public MySqlDataError Error;
             /// <summary>
-            /// Возвращает True, если произошла ошибка.
+            /// Returns True if an error occurred.
             /// </summary>
             public bool HasError;
 
@@ -152,7 +152,7 @@ namespace MySqlLib
 
         }
 
-        /// <summary>Содержит сообщения об ошибках, которые заменяют стандартные</summary>
+        /// <summary>Contains error messages that replaces standard ones</summary>
         public class MySqlDataErrorPattern
         {
             private const int host = 1042, login = 1045, db = 1049;
@@ -278,9 +278,8 @@ namespace MySqlLib
             return mr;
         }
 
-        /// <summary>Устанавливает соединение с сервером</summary>
-        /// <param name="connectionString">Строка с данными для подключения к базе данных</param>
-        /// <returns>Если во время выполнения возникает ошибка, возвращает её текст.</returns>
+        /// <summary>Connects to server</summary>
+        /// <param name="connectionString">Connection string to connect to the database</param>
         public void SetConnection(string connectionString)
         {
             if (_connection != null && _connection.State == ConnectionState.Open)
@@ -291,8 +290,8 @@ namespace MySqlLib
             command.Connection = _connection;
         }
 
-        /// <summary>Устанавливает соединение с сервером</summary>
-        /// <param name="connection">Переменная MySqlConnection (клонируется)</param>
+        /// <summary>Connects to server</summary>
+        /// <param name="connection">Instance of MySqlConnection (will be clonned)</param>
         public void SetConnection(MySqlConnection connection)
         {
             if (connection != null && connection.State == ConnectionState.Open)
@@ -315,13 +314,13 @@ namespace MySqlLib
         #endregion
 
         #region ReturnOneValue
-        /// <summary>Для выполнения запросов с возвращением отдельного значения.</summary>
-        /// <param name="query">Текст запроса к базе данных</param>
-        /// <returns>Возвращает значение при успешном выполнении запроса или текст ошибки</returns>
+        /// <summary>Executes sql query and returns single value.</summary>
+        /// <param name="query">Sql query text.</param>
+        /// <returns>Result string or exception info.</returns>
         public MySqlDataResult<string> ExecuteScalar(string query) => ExecuteScalar<string>(query);
-        /// <summary>Для выполнения запросов с возвращением отдельного значения.</summary>
-        /// <param name="query">Текст запроса к базе данных</param>
-        /// <returns>Возвращает значение при успешном выполнении запроса или текст ошибки</returns>
+        /// <summary>Executes sql query and returns single value.</summary>
+        /// <param name="query">Sql query text.</param>
+        /// <returns>Result value or exception info.</returns>
         public MySqlDataResult<T> ExecuteScalar<T>(string query)
         {
             MySqlDataVoid result1 = OpenConnection();
@@ -367,10 +366,10 @@ namespace MySqlLib
         }
 
         /// <summary>
-        /// Для выполнения запросов к MySQL без возвращения параметров.
+        /// Executes sql query and returns number of affected rows if successful or exception info.
         /// </summary>
-        /// <param name="query">Текст запроса к базе данных</param>
-        /// <returns>Возвращает количество затронутых строк при успешном выполнении запроса или текст ошибки</returns>
+        /// <param name="query">Sql query text</param>
+        /// <returns>Returns the number of affected lines or error info.</returns>
         public MySqlDataResult<int> ExecuteNonQuery(string query)
         {
             MySqlDataVoid result1 = OpenConnection();
@@ -400,9 +399,9 @@ namespace MySqlLib
         #endregion
         
         #region ReturnManyValues
-        /// <summary>Выполняет запрос выборки набора строк.</summary>
-        /// <param name="query">Текст запроса к базе данных</param>
-        /// <returns>Возвращает набор строк в DataSet при успешном выполнении запроса или текст ошибки</returns>
+        /// <summary>Executes sql query and returns DataSet if successful or exception info.</summary>
+        /// <param name="query">Sql query text</param>
+        /// <returns>DataSet or exception info</returns>
         public MySqlDataResult<DataTable> ExecuteReader(string query, bool useEncodingSafeColumnNames = false)
         {
             List<string[]> colAliases = new List<string[]>();
@@ -457,7 +456,7 @@ namespace MySqlLib
         private enum SqlQueryCharType { Unknown, String, Parentheses, Space, RowSeparator, Select, From }
 
         /// <summary>
-        /// Replaces column aliases with ANCI characters to prevent encoding problems
+        /// Replaces column aliases with ASCII characters to prevent encoding problems
         /// </summary>
         /// <returns>List of old and new column aliases</returns>
         private List<string[]> SetEncodingSafeColumnNames(ref string query)
