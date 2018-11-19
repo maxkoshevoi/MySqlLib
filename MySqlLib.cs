@@ -2,16 +2,18 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 
 namespace MySqlLib
 {
     /// <summary>Класс для простой работы с MySQL сервером.</summary>
+    [DebuggerStepThrough]
     public class MySqlData : ICloneable, IDisposable
     {
         #region Variables
-        public bool ClearParametersAfterQuery { get; set; } = false;
+        public bool ClearParametersAfterQuery { get; set; } = true;
 
         private MySqlConnection _connection;
         public MySqlConnection Connection { get => _connection; }
@@ -23,7 +25,7 @@ namespace MySqlLib
             set
             {
                 _command = value;
-                Parameters = new MySqlDataParameters(command);
+                Parameters = new MySqlDataParameters(_command);
             }
         }
         public MySqlDataErrorPattern ErrorPattern { get; set; }
@@ -245,27 +247,11 @@ namespace MySqlLib
             command = new MySqlCommand();
         }
 
-        public object Clone()
-        {
-            MySqlData newMD = new MySqlData()
-            {
-                _connection = (MySqlConnection)_connection?.Clone(),
-                command = (MySqlCommand)command?.Clone(),
-                ErrorPattern = ErrorPattern,
-                ClearParametersAfterQuery = ClearParametersAfterQuery
-            };
-            if (newMD.command != null)
-            {
-                newMD.command.Connection = newMD._connection;
-            }
-            return newMD;
-        }
+        #region Connection Management
+        public static string GetConnectionString(string server, int port, string db, string user, string pass)
+            => $"Database={db};Data Source={server};Port={port};User Id={user};Password={pass}";
 
-        public void Dispose()
-        {
-            command.Dispose();
-            _connection.Dispose();
-        }
+        public string ConnectionString { get => _connection.ConnectionString; }
 
         public MySqlDataVoid TestConnection()
         {
@@ -277,18 +263,20 @@ namespace MySqlLib
             return mr;
         }
 
-        public void RecreateCommand()
+        private MySqlDataVoid OpenConnection()
         {
-            command = new MySqlCommand()
+            MySqlDataVoid mr = new MySqlDataVoid();
+            try
             {
-                Connection = _connection
-            };
+                _connection.Open();
+                mr.HasError = false;
+            }
+            catch (MySqlException ex)
+            {
+                CatchError(mr, ex);
+            }
+            return mr;
         }
-
-        public static string GetConnectionString(string server, int port, string db, string user, string pass)
-            => $"Database={db};Data Source={server};Port={port};User Id={user};Password={pass}";
-
-        public string ConnectionString { get => _connection.ConnectionString; }
 
         /// <summary>Устанавливает соединение с сервером</summary>
         /// <param name="connectionString">Строка с данными для подключения к базе данных</param>
@@ -314,33 +302,17 @@ namespace MySqlLib
             this._connection = (MySqlConnection)connection.Clone();
             command.Connection = connection;
         }
+        #endregion
 
-        private MySqlDataVoid OpenConnection()
+        #region Commend Management
+        public void RecreateCommand()
         {
-            MySqlDataVoid mr = new MySqlDataVoid();
-            try
+            command = new MySqlCommand()
             {
-                _connection.Open();
-                mr.HasError = false;
-            }
-            catch (MySqlException ex)
-            {
-                CatchError(mr, ex);
-            }
-            return mr;
+                Connection = _connection
+            };
         }
-
-        private void CatchError(MySqlDataVoid mr, MySqlException ex)
-        {
-            mr.HasError = true;
-            mr.Error = MySqlDataError.ParceError(ex, ErrorPattern);
-        }
-
-        private void CatchError(MySqlDataVoid mr, Exception ex)
-        {
-            mr.HasError = true;
-            mr.Error = new MySqlDataError(ex);
-        }
+        #endregion
 
         #region ReturnOneValue
         /// <summary>Для выполнения запросов с возвращением отдельного значения.</summary>
@@ -426,7 +398,7 @@ namespace MySqlLib
             return result;
         }
         #endregion
-
+        
         #region ReturnManyValues
         /// <summary>Выполняет запрос выборки набора строк.</summary>
         /// <param name="query">Текст запроса к базе данных</param>
@@ -479,21 +451,24 @@ namespace MySqlLib
             return result;
         }
 
+        /// <summary>
+        /// Used in SetEncodingSafeColumnNames method
+        /// </summary>
+        private enum SqlQueryCharType { Unknown, String, Parentheses, Space, RowSeparator, Select, From }
+
+        /// <summary>
+        /// Replaces column aliases with ANCI characters to prevent encoding problems
+        /// </summary>
+        /// <returns>List of old and new column aliases</returns>
         private List<string[]> SetEncodingSafeColumnNames(ref string query)
         {
             List<string[]> res = new List<string[]>();
             string q = query.Trim().ToLower();
             if (!q.StartsWith("select")) return res;
-
-            // 0 - ?
-            // 1 - string
-            // 2 - ()
-            // 3 - space
-            // 4 - row separator
-            // 5 - select
-            // 6 - from
-            int[] map = new int[q.Length];
-            map["select".Length - 1] = 5;
+            
+            SqlQueryCharType[] map = new SqlQueryCharType[q.Length];
+            int selectLen = "select".Length;
+            map[selectLen - 1] = SqlQueryCharType.Select;
 
             char[] str = { '\'', '"', '`' };
             bool[] strIn = new bool[str.Length];
@@ -502,24 +477,16 @@ namespace MySqlLib
             Point lastStr = new Point(-1, -1);
             Point lastSpace = new Point(-1, -1);
             Point lastPar = new Point(-1, -1);
-            for (int cursor = 6; cursor < q.Length && map[cursor - 1] != 6; cursor++)
+            for (int cursor = selectLen; cursor < q.Length && map[cursor - 1] != SqlQueryCharType.From; cursor++)
             {
                 char c = q[cursor];
 
                 // strings
-                if (strIn.Count(x => x == true) > 0)
+                if (strIn.Contains(true))
                 {
-                    map[cursor] = parenthesesDepth == 0 ? 1 : 2;
+                    map[cursor] = parenthesesDepth == 0 ? SqlQueryCharType.String : SqlQueryCharType.Parentheses;
 
-                    int sInd = -1;
-                    for (int i = 0; i < str.Length; i++)
-                    {
-                        if (strIn[i])
-                        {
-                            sInd = i;
-                            break;
-                        }
-                    }
+                    int sInd = Array.IndexOf(strIn, true);
                     if (c == str[sInd])
                     {
                         strIn[sInd] = false;
@@ -528,30 +495,23 @@ namespace MySqlLib
                 }
                 else if (str.Contains(c))
                 {
-                    map[cursor] = parenthesesDepth == 0 ? 1 : 2;
+                    map[cursor] = parenthesesDepth == 0 ? SqlQueryCharType.String : SqlQueryCharType.Parentheses;
 
-                    for (int i = 0; i < str.Length; i++)
-                    {
-                        if (str[i] == c)
-                        {
-                            strIn[i] = true;
-                            break;
-                        }
-                    }
+                    strIn[Array.IndexOf(str, c)] = true;
                     continue;
                 }
 
                 // Parentheses
                 if (c == '(')
                 {
-                    map[cursor] = 2;
+                    map[cursor] = SqlQueryCharType.Parentheses;
 
                     parenthesesDepth++;
                     continue;
                 }
                 else if (c == ')')
                 {
-                    map[cursor] = 2;
+                    map[cursor] = SqlQueryCharType.Parentheses;
 
                     parenthesesDepth--;
                     continue;
@@ -559,38 +519,39 @@ namespace MySqlLib
 
                 if (parenthesesDepth > 0)
                 {
-                    map[cursor] = 2;
+                    map[cursor] = SqlQueryCharType.Parentheses;
                     continue;
                 }
 
                 // Spaces
                 if (c == ' ')
                 {
-                    map[cursor] = 3;
+                    map[cursor] = SqlQueryCharType.Space;
                     continue;
                 }
                 
                 // Column separators or SELECT area ended
                 if (c == ',' || q.Substring(cursor, "from".Length) == "from")
                 {
+                    int lastCursor = cursor;
                     bool lastCol = false;
                     if (c == ',')
                     {
-                        map[cursor] = 4;
+                        map[cursor] = SqlQueryCharType.RowSeparator;
                     }
                     else
                     {
-                        map[cursor] = 6;
+                        map[cursor] = SqlQueryCharType.From;
                         lastCol = true;
                     }
 
                     int from, to;
                     from = cursor - 1;
 
-                    while (map[from] == 3) from--;
+                    while (map[from] == SqlQueryCharType.Space) from--;
                     to = from;
 
-                    if (map[to] == 1 || map[to] == 0)
+                    if (map[to] == SqlQueryCharType.String || map[to] == SqlQueryCharType.Unknown)
                     {
                         // alias inside string (1) or plain text (0)
                         while (map[from] == map[to]) from--;
@@ -603,8 +564,8 @@ namespace MySqlLib
 
                     // checking is there is alias at all
                     int before = from - 1;
-                    while (map[before] == 3) before--;
-                    if (map[before] == 4 || map[before] == 5)
+                    while (map[before] == SqlQueryCharType.Space) before--;
+                    if (map[before] == SqlQueryCharType.RowSeparator || map[before] == SqlQueryCharType.Select)
                     {
                         // there is no alias
                         continue;
@@ -620,149 +581,64 @@ namespace MySqlLib
                     if (!lastCol)
                     {
                         cursor = from + colNewAlias.Length;
+
+                        // remapping alias area
+                        for (int i = from; i < cursor; i++)
+                        {
+                            map[i] = SqlQueryCharType.String;
+                        }
+                        map[cursor] = SqlQueryCharType.RowSeparator;
+                        for (int i = cursor + 1; i <= lastCursor; i++)
+                        {
+                            map[i] = SqlQueryCharType.Unknown;
+                        }
                     }
 
                     continue;
                 }
             }
-            
             return res;
         }
         #endregion
 
-        /*#region Backup&Restore
-        /// <summary>Создаёт резервную копию базы данных</summary>
-        /// <param name="pathToMysqldump">Путь к mysqldump.exe</param>
-        /// <param name="path">Путь, по которому она будет сохранена</param>
-        /// <param name="password">Пароль пользователя MySql сервера. null - если вы хотите ввести пароль напрямую в консоли</param>
-        /// <param name="name">Имя файла с резервной копией. null - Установить значение по умолчанию</param>
-        /// <returns>Если во время выполнения возникает ошибка, возвращает её текст.</returns>
-        public MyResult<bool> Backup(string pathToMysqldump, string path, string password = null, string name = null)
+        #region Exception Handlers
+        private void CatchError(MySqlDataVoid mr, MySqlException ex)
         {
-            MyResult<bool> mr = new MyResult<bool>();
-            if (!path.EndsWith("\\"))
-            {
-                path += "\\";
-            }
-            if (!Directory.Exists(path))
-            {
-                mr.HasError = true;
-                mr.Error = "Directory doesn't exists";
-                return mr;
-            }
-            try
-            {
-                MySqlConnectionStringBuilder sb = new MySqlConnectionStringBuilder(connection.ConnectionString);
-                string uid = sb.UserID,
-                    server = sb.Server,
-                    database = sb.Database;
-
-                if (name == null)
-                {
-                    path += DateTime.Now.ToString("yyyy.MM.dd HH:mm:ss") + ".sql";
-                }
-                else
-                {
-                    path += name;
-                }
-
-                ProcessStartInfo psi = new ProcessStartInfo()
-                {
-                    FileName = pathToMysqldump,
-                    RedirectStandardInput = false,
-                    RedirectStandardOutput = true,
-                    Arguments = string.Format(@"-u{0} -p{1} -h{2} {3}", uid, password, server, database),
-                    UseShellExecute = false
-                };
-                Process process = Process.Start(psi);
-
-                string output;
-                output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit();
-                if (process.ExitCode != 0)
-                {
-                    process.Close();
-                    throw new ArgumentException();
-                }
-                StreamWriter file = new StreamWriter(path);
-                file.WriteLine(output);
-                file.Close();
-                process.Close();
-                mr.HasError = false;
-            }
-            catch (IOException ex)
-            {
-                mr.Error = ex.Message;
-                mr.HasError = true;
-            }
-            catch (Exception ex)
-            {
-                mr.HasError = true;
-                mr.Error = ex.Message;
-            }
-            return mr;
+            mr.HasError = true;
+            mr.Error = MySqlDataError.ParceError(ex, ErrorPattern);
         }
 
-        /// <summary>Восстанавливает резервную копию базы данных из файла</summary>
-        /// <param name="pathToMysql">Путь к mysql.exe</param>
-        /// <param name="path">Путь, по которому расположен файл</param>
-        /// <param name="password">Пароль пользователя MySql сервера. null - если вы хотите ввести пароль напрямую в консоли</param>
-        /// <returns>Если во время выполнения возникает ошибка, возвращает её текст</returns>
-        public MyResult<bool> Restore(string pathToMysql, string path, string password = null)
+        private void CatchError(MySqlDataVoid mr, Exception ex)
         {
-            MyResult<bool> mr = new MyResult<bool>();
-            if (!File.Exists(path))
-            {
-                mr.HasError = true;
-                mr.Error = "File doesn't exists";
-                return mr;
-            }
-            try
-            {
-                MySqlConnectionStringBuilder sb = new MySqlConnectionStringBuilder(connection.ConnectionString);
-                string uid = sb.UserID,
-                    server = sb.Server,
-                    database = sb.Database;
-
-                StreamReader file = new StreamReader(path);
-                string input = file.ReadToEnd();
-                file.Close();
-
-                ProcessStartInfo psi = new ProcessStartInfo()
-                {
-                    FileName = pathToMysql,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = false,
-                    Arguments = string.Format(@"-u{0} -p{1} -h{2} {3}", uid, password, server, database),
-                    UseShellExecute = false
-                };
-                Process process = Process.Start(psi);
-                process.StandardInput.WriteLine(input);
-                process.StandardInput.Close();
-                process.WaitForExit();
-                if (process.ExitCode != 0)
-                {
-                    process.Close();
-                    throw new ArgumentException();
-                }
-                process.Close();
-                mr.HasError = false;
-            }
-            catch (IOException ex)
-            {
-                mr.HasError = true;
-                mr.Error = ex.Message;
-            }
-            catch (Exception ex)
-            {
-                mr.HasError = true;
-                mr.Error = ex.Message;
-            }
-            return mr;
+            mr.HasError = true;
+            mr.Error = new MySqlDataError(ex);
         }
-        #endregion*/
+        #endregion
+
+        public object Clone()
+        {
+            MySqlData newMD = new MySqlData()
+            {
+                _connection = (MySqlConnection)_connection?.Clone(),
+                command = (MySqlCommand)command?.Clone(),
+                ErrorPattern = ErrorPattern,
+                ClearParametersAfterQuery = ClearParametersAfterQuery
+            };
+            if (newMD.command != null)
+            {
+                newMD.command.Connection = newMD._connection;
+            }
+            return newMD;
+        }
+
+        public void Dispose()
+        {
+            command.Dispose();
+            _connection.Dispose();
+        }
     }
 
+    [DebuggerStepThrough]
     public static class DataRowEx
     {
         public static T Get<T>(this DataRow row, int columnIndex, bool DefaultIfNull = false)
